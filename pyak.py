@@ -6,7 +6,8 @@ import time
 import datetime
 import urllib
 import os
-import hashlib
+import uuid
+import re
 
 from hashlib import sha1
 from hashlib import md5
@@ -63,7 +64,7 @@ class Comment:
     def downvote(self):
         if self.liked == 0:
             self.likes -= 1
-            self.liked += 1
+            self.liked -= 1
             return self.client.downvote_comment(self.comment_id)
 
     def report(self):
@@ -77,12 +78,22 @@ class Comment:
         return self.client.post_comment(self.message_id, comment)
 
     def print_comment(self):
-        my_action = ""
-        if self.liked > 0:
-            my_action = "^"
-        elif self.liked < 0:
-            my_action = "v"
-        print ("\t\t%s(%s) %s \n\n\t\tPosted  %s" % (my_action, self.likes, self.comment, self.time))
+        try:
+            my_action = ""
+            if self.liked > 0:
+                my_action = "^ "
+            elif self.liked < 0:
+                my_action = "v "
+            print ("\t\t%s(%s) %s \n\n\t\tPosted  %s" % (my_action, self.likes, self.comment, self.time))
+        # Fix for emoji crash: filter emoji if not supported
+        except UnicodeEncodeError:
+            self.comment = re.sub('[^\x00-\x7F]', '',self.comment)
+            my_action = ""
+            if self.liked > 0:
+                my_action = "^ "
+            elif self.liked < 0:
+                my_action = "v "
+            print ("\t\t%s(%s) %s \n\n\t\tPosted  %s" % (my_action, self.likes, self.comment, self.time))
 
 class Yak:
     def __init__(self, raw, client):
@@ -100,6 +111,8 @@ class Yak:
         self.latitude = raw["latitude"]
         self.likes = int(raw["numberOfLikes"])
         self.message = raw["message"]
+        self.liked = False
+        self.reyaked = False
         try:
             self.type = raw["type"]
             self.liked = int(raw["liked"])
@@ -143,16 +156,10 @@ class Yak:
 
     def get_comments(self):
         return self.client.get_comments(self.message_id)
-        
+
     def get_locationNum(self):
         return self.latitude - self.longitude
 
-    def print_yak(self):
-        if self.handle is not None:
-            print ("### %s ###" % self.handle)
-        print ()
-        print (self.message)
-        print ("\n\t%s likes  |  Posted  %s  at  %s %s" % (self.likes, self.time, self.latitude, self.longitude))
     def return_yak(self):
         dict = {}
         dict['message_id']=self.message_id
@@ -161,11 +168,40 @@ class Yak:
         dict['time']=self.time
         dict['latitude']=self.latitude
         dict['longitude']=self.longitude
-        dict['hash']=hashlib.sha224(str(self.longitude)+str(self.time)+str(self.longitude)).hexdigest()[:10]
+        dict['hash']=sha1(str(self.longitude)+str(self.time)+str(self.longitude)).hexdigest()[:10]
         return dict;
+
+    def print_yak(self):
+        try:
+            if self.handle is not None:
+                print ("### %s ###" % self.handle)
+            print ()
+            print (self.message)
+            # Show arrow if yak is upvoted or downvoted
+            my_action = ""
+            if self.liked > 0:
+                my_action = "^ "
+            elif self.liked < 0:
+                my_action = "v "
+            print ("\n\t%s%s likes  |  Posted  %s  at  %s %s" % (my_action, self.likes, self.time, self.latitude, self.longitude))
+        # Fix for emoji crash: filter emoji if not supported
+        except UnicodeEncodeError:
+            self.message = re.sub('[^\x00-\x7F]', '',self.message)
+            if self.handle is not None:
+                print ("### %s ###" % self.handle)
+            print ()
+            print (self.message)
+            # Show arrow if yak is upvoted or downvoted
+            my_action = ""
+            if self.liked > 0:
+                my_action = "^ "
+            elif self.liked < 0:
+                my_action = "v "
+            print ("\n\t%s%s likes  |  Posted  %s  at  %s %s" % (my_action, self.likes, self.time, self.latitude, self.longitude))
+
 class Yakker:
-    base_url = "https://yikyakapp.com/api/"
-    user_agent = "Mozilla/5.1 (Linux; Android 4.0.4; Galaxy Nexus Build/IMM76B) AppleWebKit/535.19 (KHTML, like Gecko) Chrome/18.0.1025.133 Mobile Safari/535.19"
+    base_url = "https://us-east-api.yikyakapi.net/api/"
+    user_agent = "Yik Yak/2.1.0.23 CFNetwork/711.1.12 Darwin/14.0.0"
 
     def __init__(self, user_id=None, location=None, force_register=False):
         if location is None:
@@ -178,7 +214,6 @@ class Yakker:
         elif force_register:
             self.register_id_new(user_id)
 
-        print user_id
         self.id = user_id
 
         self.handle = None
@@ -186,19 +221,20 @@ class Yakker:
         #self.update_stats()
 
     def gen_id(self):
-        return md5(os.urandom(128)).hexdigest().upper()
+        # Thanks for the fix: ryhanson
+        return str(uuid.uuid4()).upper()
 
     def register_id_new(self, id):
         params = {
             "userID": id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         result = self.get("registerUser", params)
         return result
 
     def sign_request(self, page, params):
-        key = "35FD04E8-B7B1-45C4-9886-94A75F4A2BB4"
+        key = "F7CAFA2F-FE67-4E03-A090-AC7FFF010729"
 
         #The salt is just the current time in seconds since epoch
         salt = str(int(time.time()))
@@ -221,12 +257,11 @@ class Yakker:
         #Calculate the signature
         h = hmac.new(key.encode(), msg.encode(), sha1)
         hash = base64.b64encode(h.digest())
-        print hash
-        print salt
+
         return hash, salt
         
     def post_sign_request(self, page, params):
-        key = "35FD04E8-B7B1-45C4-9886-94A75F4A2BB4"
+        key = "F7CAFA2F-FE67-4E03-A090-AC7FFF010729"
     
         #The salt is just the current time in seconds since epoch
         salt = str(int(time.time()))
@@ -240,6 +275,7 @@ class Yakker:
         #Calculate the signature
         h = hmac.new(key.encode(), msg.encode(), sha1)
         hash = base64.b64encode(h.digest())
+        
         return hash, salt
 
 
@@ -294,28 +330,25 @@ class Yakker:
     def contact(self, message):
         params = {
             "userID": self.id,
-            "message": message
+            "message": message,
         }
         return self.get("contactUs", params)
 
     def upvote_yak(self, message_id):
-        print("upvoted "+message_id+" by "+self.id)
         params = {
             "userID": self.id,
             "messageID": message_id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get("likeMessage", params)
 
     def downvote_yak(self, message_id):
-        print("downvoted "+message_id+" by "+self.id)
-
         params = {
             "userID": self.id,
             "messageID": message_id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get("downvoteMessage", params)
 
@@ -323,8 +356,8 @@ class Yakker:
         params = {
             "userID": self.id,
             "commentID": comment_id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get("likeComment", params)
 
@@ -332,8 +365,8 @@ class Yakker:
         params = {
             "userID": self.id,
             "commentID": comment_id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get("downvoteComment", params)
 
@@ -341,8 +374,8 @@ class Yakker:
         params = params = {
             "userID": self.id,
             "messageID": message_id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get("reportMessage", params)
 
@@ -350,8 +383,8 @@ class Yakker:
         params = params = {
             "userID": self.id,
             "messageID": message_id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get("deleteMessage2", params)
 
@@ -360,8 +393,8 @@ class Yakker:
             "userID": self.id,
             "commentID": comment_id,
             "messageID": message_id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get("reportMessage", params)
 
@@ -370,32 +403,32 @@ class Yakker:
             "userID": self.id,
             "commentID": comment_id,
             "messageID": message_id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get("deleteComment", params)
 
     def get_greatest(self):
         params = {
             "userID": self.id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get_yak_list("getGreatest", params)
 
     def get_my_tops(self):
         params = {
             "userID": self.id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get_yak_list("getMyTops", params)
 
     def get_recent_replied(self):
         params = {
             "userID": self.id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get_yak_list("getMyRecentReplies", params)
 
@@ -405,16 +438,16 @@ class Yakker:
     def get_my_recent_yaks(self):
         params = {
             "userID": self.id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get_yak_list("getMyRecentYaks", params)
 
     def get_area_tops(self):
         params = {
             "userID": self.id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         toplist = self.get_yak_list("getAreaTops", params)
         toplist.sort(key=lambda x: x.likes, reverse=True)
@@ -423,8 +456,8 @@ class Yakker:
     def get_yaks(self):
         params = {
             "userID": self.id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         return self.get_yak_list("getMessages", params)
 
@@ -445,8 +478,8 @@ class Yakker:
         params = {
             "userID": self.id,
             "messageID": message_id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
 
         return self.parse_comments(self.get("getComments", params).text, message_id)
@@ -488,8 +521,8 @@ class Yakker:
     def get_yakarma(self):
         params = {
             "userID": self.id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
         }
         data = self.get("getMessages", params).json()
         return int(data['yakarma'])
@@ -500,8 +533,18 @@ class Yakker:
 
         params = {
             "userID": self.id,
-            "lat": self.location.latitude,
-            "long": self.location.longitude,
+            "userLat": self.location.latitude,
+            "userLong": self.location.longitude,
             'peekID': peek_id,
         }
         return self.get_yak_list("getPeekMessages", params)
+        
+    def peekLoc(self, location):
+        params = {
+                "lat": location.latitude,
+                "long": location.longitude,
+                "userID": self.id,
+                "userLat": self.location.latitude,
+                "userLong": self.location.longitude,
+        }
+        return self.get_yak_list("yaks", params)

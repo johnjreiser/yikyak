@@ -23,9 +23,9 @@ def map():
 	lat=request.args.get('latitude')
 	lon=request.args.get('longitude')
 	if(lon==None):
-		lon="-86.9241416"
+		lon="-75.119871"
 	if(lat==None):
-		lat="40.42569479"
+		lat="39.707961"
 	print(lat)
 	location = pk.Location(lat, lon)
 	#testyakker = pk.Yakker(None, location, False)
@@ -74,5 +74,5 @@ def index():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
-    session['latitude']="40.425694799999995"
-    session['longitude']="-86.9241416"
+    session['latitude']="39.707961"
+    session['longitude']="-75.119871"
