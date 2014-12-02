@@ -42,12 +42,33 @@ CREATE OR REPLACE RULE yakmessages_ignore_duplicate_inserts AS
  WHERE (EXISTS ( SELECT 1
 				   FROM yakmessages
 				  WHERE yakmessages.message_id = NEW.message_id))
-    DO INSTEAD NOTHING;
-/* should change the above to update the number of comments, etc. */ 
+    DO INSTEAD 
+    UPDATE yakmessages
+       SET likes = NEW.likes
+         , comments = NEW.comments
+         , longitude = NEW.longitude
+         , latitude = NEW.latitude
+     WHERE message_id = NEW.message_id;
 
 CREATE OR REPLACE RULE yakcomments_ignore_duplicate_inserts AS
     ON INSERT TO yakcomments
  WHERE (EXISTS ( SELECT 1
 				   FROM yakcomments
 				  WHERE yakcomments.comment_id = NEW.comment_id))
-    DO INSTEAD NOTHING;
+    DO INSTEAD
+    UPDATE yakcomments
+       SET likes = NEW.likes
+     WHERE comment_id = NEW.comment_id AND message_id = NEW.message_id;
+
+CREATE OR REPLACE VIEW poster_stats AS
+SELECT q.poster_id, max(q.messages) as messages, max(q.comments) as comments, sum(total_likes) as total_likes, sum(message_likes) as message_likes, sum(comment_likes) as comment_likes, min(timefirst) as timefirst, max(timelast) as timelast
+FROM(
+SELECT poster_id, count(message_id) as messages, 0 as comments, sum(likes) as total_likes, sum(likes) as message_likes, 0 as comment_likes, min(message_ts) as timefirst, max(message_ts) as timelast
+  FROM yakmessages
+ GROUP BY poster_id
+UNION ALL
+SELECT poster_id, 0 as messages, count(comment_id) as comments, sum(likes) as total_likes, 0 as message_likes, sum(likes) as comment_likes, min(comment_ts) as timefirst, max(comment_ts) as timelast
+  FROM yakcomments
+ GROUP BY poster_id
+) q
+GROUP BY q.poster_id;
